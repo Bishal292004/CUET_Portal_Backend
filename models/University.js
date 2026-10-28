@@ -23,6 +23,7 @@ const universitySchema = new mongoose.Schema(
       index: true,
     },
     statusUpdatedAt: Date,
+    lastVerifiedAt: Date,
 
     verified: { type: Boolean, default: false },
     isArchived: { type: Boolean, default: false },

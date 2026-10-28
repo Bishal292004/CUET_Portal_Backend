@@ -8,6 +8,8 @@ import authRoutes from "./routes/authRoutes.js";
 
 import userRoutes from "./routes/userRoutes.js";
 
+import adminRoutes from "./routes/adminRoutes.js";
+
 
 
 const app = express();
@@ -19,6 +21,7 @@ app.use(express.json({limit: "100kb"}));
 app.use("/api/auth", authRoutes);
 app.use("/api/me", userRoutes);
 app.use("/api/health", healthRoutes);
+app.use("/api/admin", adminRoutes);
 
 app.use(notFound);
 app.use(errorHandler);

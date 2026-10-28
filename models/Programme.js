@@ -11,6 +11,8 @@ const programmeSchema = new mongoose.Schema(
     seatsAvailable: { type: Number, min: 0 },
     annualFee: { type: Number, min: 0 },
     eligibility: { type: String, trim: true },
+    sourceUrl: { type: String, trim: true },
+    lastVerifiedAt: Date,
 
     verified: { type: Boolean, default: false },
     isArchived: { type: Boolean, default: false },
