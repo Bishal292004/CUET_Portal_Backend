@@ -3,3 +3,10 @@ export function getPagination(query) {
   const limit = Math.min(Math.max(parseInt(query.limit, 10) || 20, 1), 100);
   return { page, limit, skip: (page - 1) * limit };
 }
+
+export const paginationMeta = (page, limit, total) => ({
+  page,
+  limit,
+  total,
+  totalPages: Math.ceil(total / limit),
+});
