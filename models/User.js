@@ -34,6 +34,10 @@ const userSchema = new mongoose.Schema(
     emailNotifications: { type: Boolean, default: true },
 
     emailVerified: { type: Boolean, default: false },
+    emailVerificationOtpHash: { type: String, select: false },
+    emailVerificationOtpExpiresAt: { type: Date, select: false },
+    emailVerificationOtpLastSentAt: { type: Date, select: false },
+    emailVerificationOtpAttempts: { type: Number, default: 0, select: false },
     isActive: { type: Boolean, default: true },
     passwordChangedAt: Date,
     lastLoginAt: Date,

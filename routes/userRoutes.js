@@ -20,6 +20,10 @@ import {
 } from "../validators/profileValidators.js";
 import { getMe, updateMe, setCourses, setScores } from "../controllers/userController.js";
 
+import { getChances } from "../controllers/chanceController.js";
+
+
+
 const router = Router();
 
 router.use(authenticate); // every route below needs a logged-in user
@@ -28,5 +32,6 @@ router.get("/", getMe);
 router.patch("/", validate(updateProfileSchema), updateMe);
 router.put("/courses", validate(coursesSchema), setCourses);
 router.put("/scores", validate(scoresSchema), setScores);
+router.get("/chances", getChances);
 
 export default router;
