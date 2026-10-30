@@ -16,11 +16,11 @@ export async function authenticate(req, res, next){
 
         let decode;
         try{
-            decode = jwt.verify(token, process.env.JWT_SECRET);
+            decode = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ["HS256"] });
         }catch {
             return res.status(401).json({
                 success: false,
-                message: "Your session in invalid or has expired. Please login to continue.",
+                message: "Your session is invalid or has expired. Please login to continue.",
             });
         }
 
@@ -37,7 +37,7 @@ export async function authenticate(req, res, next){
         if(user.passwordChangedAt && decode.iat * 1000 < user.passwordChangedAt.getTime()){
             return res.status(401).json({
                 success: false,
-                message: "Your session in invalid or has expired. Please login again.",
+                message: "Your session is invalid or has expired. Please login again.",
             });
         }
 

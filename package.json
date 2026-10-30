@@ -10,7 +10,8 @@
     "seed": "node scripts/seed.js",
     "set-role": "node scripts/setRole.js",
     "import-data": "node scripts/importData.js",
-    "remove-test-cutoffs": "node scripts/removeTestCutoffs.js"
+    "remove-test-cutoffs": "node scripts/removeTestCutoffs.js",
+    "verify-existing-users": "node scripts/verifyExistingUsers.js"
   },
   "keywords": [],
   "author": "",

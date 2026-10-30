@@ -6,6 +6,14 @@ export function notFound(req, res) {
 }
 
 export function errorHandler(err, req, res, next) {
+  // Problems with the request itself: say so plainly, without parser internals
+  if (err.type === "entity.parse.failed") {
+    return res.status(400).json({ success: false, message: "Request body is not valid JSON." });
+  }
+  if (err.type === "entity.too.large") {
+    return res.status(413).json({ success: false, message: "Request body is too large." });
+  }
+
   console.error(err);
   const status = err.status || 500;
   res.status(status).json({

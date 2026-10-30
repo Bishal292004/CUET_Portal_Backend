@@ -20,6 +20,18 @@ export async function listProgrammes(req, res, next) {
     if (courseId !== undefined && !isObjectId(courseId)) return badRequest(res, "Invalid courseId.");
     if (universityId !== undefined && !isObjectId(universityId)) return badRequest(res, "Invalid universityId.");
 
+    let fee;
+    if (maxFee !== undefined) {
+      fee = Number(maxFee);
+      if (!Number.isFinite(fee) || fee < 0) return badRequest(res, "maxFee must be a positive number.");
+    }
+    let seats;
+    if (minSeats !== undefined) {
+      seats = Number(minSeats);
+      if (!Number.isFinite(seats) || seats < 0) return badRequest(res, "minSeats must be a positive number.");
+    }
+
+
     // Step 1: which universities and courses are visible to students (and match the filters)?
     const uniFilter = { verified: true, isArchived: false };
     if (universityId) uniFilter._id = universityId;
@@ -44,16 +56,8 @@ export async function listProgrammes(req, res, next) {
       course: { $in: courseIds },
     };
 
-    if (maxFee !== undefined) {
-      const fee = Number(maxFee);
-      if (!Number.isFinite(fee) || fee < 0) return badRequest(res, "maxFee must be a positive number.");
-      filter.annualFee = { $lte: fee };
-    }
-    if (minSeats !== undefined) {
-      const seats = Number(minSeats);
-      if (!Number.isFinite(seats) || seats < 0) return badRequest(res, "minSeats must be a positive number.");
-      filter.totalSeats = { $gte: seats };
-    }
+    if (fee !== undefined) filter.annualFee = { $lte: fee };
+    if (seats !== undefined) filter.totalSeats = { $gte: seats };
 
     const order = typeof sort === "string" && Object.hasOwn(SORTS, sort) ? SORTS[sort] : {};
 

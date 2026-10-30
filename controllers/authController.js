@@ -12,6 +12,8 @@ import { hashEmailOtp } from "../utils/emailOtp.js";
 const DUMMY_HASH = await bcrypt.hash("YB61ZnAO#123", 10);
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const MAX_OTP_ATTEMPTS = 5;
+const RESEND_COOLDOWN_MS = 60 * 1000;
 
 //function for new user registration
 export async function register(req, res, next) {
@@ -50,48 +52,90 @@ export async function register(req, res, next) {
     if (password.length < 8 || Buffer.byteLength(password) > 72) {
       return res.status(400).json({
         success: false,
-        message: "Password must be at least 8 characters long.",
+        message: "Password must be at least 8 characters long (and under 72 bytes).",
       });
     }
 
-    // 4. Friendly duplicate check
-    const existingUser = await User.findOne({ email: cleanEmail });
-    if (existingUser) {
+    // 4. Is this email already taken?
+    const now = new Date();
+    const existing = await User.findOne({ email: cleanEmail }).select(
+      "+emailVerificationOtpLastSentAt",
+    );
+
+    if (existing?.emailVerified) {
       return res.status(409).json({
         success: false,
         message: "This email is already registered. Please log in instead.",
       });
     }
 
-    // 5. Hash and save
+    if (
+      existing?.emailVerificationOtpLastSentAt &&
+      now.getTime() - existing.emailVerificationOtpLastSentAt.getTime() <
+        RESEND_COOLDOWN_MS
+    ) {
+      return res.status(429).json({
+        success: false,
+        message: "A code was just sent. Please wait a minute and try again.",
+      });
+    }
+
+    // 5. Hash the password and prepare the verification code
     const passwordHash = await bcrypt.hash(password, 10);
-    const user = await User.create({
-      name: cleanName,
-      email: cleanEmail,
-      passwordHash,
-    });
-
-    //email otp verification
     const { otp, otpHash, expiresAt } = createEmailOtp();
+    const otpFields = {
+      emailVerificationOtpHash: otpHash,
+      emailVerificationOtpExpiresAt: expiresAt,
+      emailVerificationOtpLastSentAt: now,
+      emailVerificationOtpAttempts: 0,
+    };
 
-    user.emailVerificationOtpHash = otpHash;
-    user.emailVerificationOtpExpiresAt = expiresAt;
-    user.emailVerificationOtpLastSentAt = new Date();
-    user.emailVerificationOtpAttempts = 0;
+    let user;
+    if (existing) {
+      // The address is registered but was NEVER verified. Whoever proves they own the
+      // mailbox gets the account, so replace the old name and password. This stops
+      // someone from pre-registering another person's email with a password they know.
+      user = await User.findOneAndUpdate(
+        { _id: existing._id, emailVerified: false },
+        { $set: { name: cleanName, passwordHash, ...otpFields } },
+        { returnDocument: "after", runValidators: true },
+      );
+      if (!user) {
+        return res.status(409).json({
+          success: false,
+          message: "This email is already registered. Please log in instead.",
+        });
+      }
+    } else {
+      user = await User.create({
+        name: cleanName,
+        email: cleanEmail,
+        passwordHash,
+        ...otpFields,
+      });
+    }
 
-    await user.save();
+    // 6. Send the code. A failed email must not turn a created account into a 500.
+    let emailSent = true;
+    try {
+      await sendEmail({
+        to: user.email,
+        subject: "Verify your CUET PG Portal email",
+        text: `Your verification code is ${otp}. It expires in 10 minutes.`,
+      });
+    } catch (mailError) {
+      emailSent = false;
+      console.error("Verification email failed:", mailError.message);
+    }
 
-    await sendEmail({
-      to: user.email,
-      subject: "Verify your CUET PG Portal email",
-      text: `Your verification code is ${otp}. It expires in 10 minutes.`,
-    });
-
-    // 6. Respond with safe fields only (never send the whole document)
+    // 7. Respond with safe fields only (never send the whole document)
     return res.status(201).json({
       success: true,
-      message: "Registration successful.",
+      message: emailSent
+        ? "Registration successful. Check your email for the verification code."
+        : "Account created, but we could not send the verification email. Please request a new code in a minute.",
       data: {
+        emailSent,
         user: {
           id: user._id,
           name: user.name,
@@ -101,7 +145,7 @@ export async function register(req, res, next) {
       },
     });
   } catch (error) {
-    // Safety net for the race condition in point 10
+    // Safety net: two identical requests arriving at the same instant
     if (error.code === 11000) {
       return res.status(409).json({
         success: false,
@@ -174,7 +218,7 @@ export async function login(req, res, next) {
 
     return res.status(200).json({
       success: true,
-      message: "Login successfull.",
+      message: "Login successful.",
       data: {
         token,
         user: {
@@ -207,68 +251,70 @@ export async function verifyEmail(req, res, next) {
 
     const cleanEmail = email.trim().toLowerCase();
 
-    const user = await User.findOne({ email: cleanEmail }).select(
-      "+emailVerificationOtpHash " +
-        "+emailVerificationOtpExpiresAt " +
-        "+emailVerificationOtpAttempts",
-    );
-
     const invalidCode = () =>
       res.status(400).json({
         success: false,
         message: "Verification code is invalid or expired.",
       });
-
-    if (!user || user.emailVerified) {
-      return invalidCode();
-    }
-
-    if (user.emailVerificationOtpAttempts >= 5) {
-      return res.status(429).json({
+    const tooManyAttempts = () =>
+      res.status(429).json({
         success: false,
         message: "Too many incorrect attempts. Request a new code.",
       });
+
+    // Step 1: use up ONE attempt, atomically, before looking at the code.
+    // Because the check (< MAX_OTP_ATTEMPTS) and the +1 happen in a single database
+    // operation, 100 parallel guesses can never get more than 5 tries in total.
+    const claimed = await User.findOneAndUpdate(
+      {
+        email: cleanEmail,
+        emailVerified: false,
+        emailVerificationOtpAttempts: { $lt: MAX_OTP_ATTEMPTS },
+        emailVerificationOtpExpiresAt: { $gt: new Date() },
+      },
+      { $inc: { emailVerificationOtpAttempts: 1 } },
+      { returnDocument: "after" },
+    ).select("+emailVerificationOtpHash +emailVerificationOtpAttempts");
+
+    if (!claimed) {
+      const locked = await User.exists({
+        email: cleanEmail,
+        emailVerified: false,
+        emailVerificationOtpAttempts: { $gte: MAX_OTP_ATTEMPTS },
+      });
+      return locked ? tooManyAttempts() : invalidCode();
     }
 
-    const storedHash = user.emailVerificationOtpHash;
-    const expiresAt = user.emailVerificationOtpExpiresAt;
-
-    if (
-      !storedHash ||
-      !/^[a-f\d]{64}$/i.test(storedHash) ||
-      !expiresAt ||
-      expiresAt.getTime() <= Date.now()
-    ) {
+    // Step 2: compare the submitted code with the stored hash
+    const storedHash = claimed.emailVerificationOtpHash;
+    if (!storedHash || !/^[a-f\d]{64}$/i.test(storedHash)) {
       return invalidCode();
     }
 
-    const submittedHash = hashEmailOtp(otp);
     const matches = timingSafeEqual(
       Buffer.from(storedHash, "hex"),
-      Buffer.from(submittedHash, "hex"),
+      Buffer.from(hashEmailOtp(otp), "hex"),
     );
 
     if (!matches) {
-      user.emailVerificationOtpAttempts += 1;
-      await user.save();
-
-      if (user.emailVerificationOtpAttempts >= 5) {
-        return res.status(429).json({
-          success: false,
-          message: "Too many incorrect attempts. Request a new code.",
-        });
-      }
-
-      return invalidCode();
+      return claimed.emailVerificationOtpAttempts >= MAX_OTP_ATTEMPTS
+        ? tooManyAttempts()
+        : invalidCode();
     }
 
-    user.emailVerified = true;
-    user.emailVerificationOtpHash = undefined;
-    user.emailVerificationOtpExpiresAt = undefined;
-    user.emailVerificationOtpLastSentAt = undefined;
-    user.emailVerificationOtpAttempts = 0;
-
-    await user.save();
+    // Step 3: mark verified, but only if this exact code is still the current one
+    const result = await User.updateOne(
+      { _id: claimed._id, emailVerified: false, emailVerificationOtpHash: storedHash },
+      {
+        $set: { emailVerified: true, emailVerificationOtpAttempts: 0 },
+        $unset: {
+          emailVerificationOtpHash: 1,
+          emailVerificationOtpExpiresAt: 1,
+          emailVerificationOtpLastSentAt: 1,
+        },
+      },
+    );
+    if (!result.modifiedCount) return invalidCode();
 
     return res.status(200).json({
       success: true,
@@ -316,7 +362,7 @@ export async function resendVerificationEmail(req, res, next) {
           emailVerificationOtpAttempts: 0,
         },
       },
-      { new: true, runValidators: true },
+      { returnDocument: "after", runValidators: true },
     );
 
     const genericResponse = {

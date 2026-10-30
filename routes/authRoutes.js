@@ -1,14 +1,22 @@
 import { Router } from "express";
-import { register, login, verifyEmail, resendVerificationEmail} from "../controllers/authController.js";
-
-import { authLimiter } from "../middleware/rateLimiter.js";
+import {
+  register,
+  login,
+  verifyEmail,
+  resendVerificationEmail,
+} from "../controllers/authController.js";
+import {
+  registerLimiter,
+  loginLimiter,
+  otpLimiter,
+  resendLimiter,
+} from "../middleware/rateLimiter.js";
 
 const router = Router();
 
-router.post("/register",authLimiter, register);
-router.post("/login", authLimiter, login);
-//verify email using otp
-router.post("/verify-email", authLimiter, verifyEmail);
-router.post("/resend-verification", authLimiter, resendVerificationEmail);
+router.post("/register", registerLimiter, register);
+router.post("/login", loginLimiter, login);
+router.post("/verify-email", otpLimiter, verifyEmail);
+router.post("/resend-verification", resendLimiter, resendVerificationEmail);
 
 export default router;

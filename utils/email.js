@@ -22,6 +22,9 @@ export const emailTransport = nodemailer.createTransport({
   host: process.env.MAIL_HOST,
   port,
   secure: process.env.MAIL_SECURE === "true",
+  connectionTimeout: 10_000,
+  greetingTimeout: 10_000,
+  socketTimeout: 20_000,
   auth: {
     user: process.env.MAIL_USER,
     pass: process.env.MAIL_PASS,
