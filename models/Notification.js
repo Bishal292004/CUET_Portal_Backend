@@ -24,4 +24,10 @@ const notificationSchema = new mongoose.Schema(
 notificationSchema.index({ user: 1, createdAt: -1 });
 notificationSchema.index({ user: 1, readAt: 1 });
 
+// One notification per student per update. Makes retrying a failed send safe.
+notificationSchema.index(
+  { user: 1, update: 1 },
+  { unique: true, partialFilterExpression: { update: { $exists: true } } }
+);
+
 export default mongoose.model("Notification", notificationSchema);

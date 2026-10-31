@@ -6,6 +6,11 @@ import {
   updateUniversitySchema,
   statusSchema,
 } from "../validators/universityValidators.js";
+import { createUpdateSchema } from "../validators/updateValidators.js";
+import {
+  listUniversityUpdatesAdmin,
+  createUpdate,
+} from "../controllers/adminUpdateController.js";
 import {
   listUniversities,
   getUniversity,
@@ -27,5 +32,7 @@ router.patch("/:id", validate(updateUniversitySchema), updateUniversity);
 router.patch("/:id/status", validate(statusSchema), updateStatus);
 router.delete("/:id", archiveUniversity);
 router.post("/:id/verify", verifyUniversity);
+router.get("/:id/updates", listUniversityUpdatesAdmin);
+router.post("/:id/updates", validate(createUpdateSchema), createUpdate);
 
 export default router;

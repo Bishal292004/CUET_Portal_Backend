@@ -10,6 +10,9 @@ import {
 import { getMe, updateMe, setCourses, setScores } from "../controllers/userController.js";
 
 import { getChances } from "../controllers/chanceController.js";
+import { getDashboard } from "../controllers/dashboardController.js";
+import subscriptionRoutes from "./subscriptionRoutes.js";
+import notificationRoutes from "./notificationRoutes.js";
 
 
 
@@ -22,5 +25,8 @@ router.patch("/", validate(updateProfileSchema), updateMe);
 router.put("/courses", validate(coursesSchema), setCourses);
 router.put("/scores", validate(scoresSchema), setScores);
 router.get("/chances", getChances);
+router.get("/dashboard", getDashboard);
+router.use("/subscriptions", subscriptionRoutes);
+router.use("/notifications", notificationRoutes);
 
 export default router;
