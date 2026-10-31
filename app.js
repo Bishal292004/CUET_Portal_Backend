@@ -13,6 +13,7 @@ import { apiLimiter } from "./middleware/rateLimiter.js";
 import courseRoutes from "./routes/courseRoutes.js";
 import universityRoutes from "./routes/universityRoutes.js";
 import programmeRoutes from "./routes/programmeRoutes.js";
+import searchRoutes from "./routes/searchRoutes.js";
 
 
 const app = express();
@@ -40,6 +41,7 @@ app.use("/api", apiLimiter);
 app.use("/api/courses", courseRoutes);
 app.use("/api/universities", universityRoutes);
 app.use("/api/programmes", programmeRoutes);
+app.use("/api/search", searchRoutes);
 
 app.use(notFound);
 app.use(errorHandler);

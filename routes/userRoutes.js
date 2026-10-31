@@ -11,6 +11,7 @@ import { getMe, updateMe, setCourses, setScores } from "../controllers/userContr
 
 import { getChances } from "../controllers/chanceController.js";
 import { getDashboard } from "../controllers/dashboardController.js";
+import { getRecommendations } from "../controllers/recommendationController.js";
 import subscriptionRoutes from "./subscriptionRoutes.js";
 import notificationRoutes from "./notificationRoutes.js";
 
@@ -26,6 +27,7 @@ router.put("/courses", validate(coursesSchema), setCourses);
 router.put("/scores", validate(scoresSchema), setScores);
 router.get("/chances", getChances);
 router.get("/dashboard", getDashboard);
+router.get("/recommendations", getRecommendations);
 router.use("/subscriptions", subscriptionRoutes);
 router.use("/notifications", notificationRoutes);
 

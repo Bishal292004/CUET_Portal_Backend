@@ -27,7 +27,7 @@ export async function computeChances(user, courseIds) {
       "university",
       "name shortName slug state city admissionStatus admissionUrl statusUpdatedAt lastVerifiedAt"
     )
-    .populate("course", "name slug")
+    .populate("course", "name slug category")
     .limit(300)
     .lean();
 
