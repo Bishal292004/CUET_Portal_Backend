@@ -34,7 +34,9 @@ export async function authenticate(req, res, next){
         }
 
         //Reject tokens before the last password change
-        if(user.passwordChangedAt && decode.iat * 1000 < user.passwordChangedAt.getTime()){
+        // Compared in whole seconds: a token's issue time has no milliseconds, so comparing in
+        // milliseconds would reject a token issued in the same second as the password change
+        if(user.passwordChangedAt && decode.iat < Math.floor(user.passwordChangedAt.getTime() / 1000)){
             return res.status(401).json({
                 success: false,
                 message: "Your session is invalid or has expired. Please login again.",
