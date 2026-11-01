@@ -6,6 +6,7 @@ import adminUpdateRoutes from "./adminUpdateRoutes.js";
 import adminProgrammeRoutes from "./adminProgrammeRoutes.js";
 import adminEventRoutes from "./adminEventRoutes.js";
 import adminCutoffRoutes from "./adminCutoffRoutes.js";
+import adminEmailRoutes from "./adminEmailRoutes.js";
 
 const router = Router();
 
@@ -17,5 +18,6 @@ router.use("/updates", adminUpdateRoutes);
 router.use("/programmes", adminProgrammeRoutes);
 router.use("/events", adminEventRoutes);
 router.use("/cutoffs", adminCutoffRoutes);
+router.use("/email", adminEmailRoutes);
 
 export default router;
