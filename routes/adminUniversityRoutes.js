@@ -7,6 +7,11 @@ import {
   statusSchema,
 } from "../validators/universityValidators.js";
 import { createUpdateSchema } from "../validators/updateValidators.js";
+import { createEventSchema } from "../validators/eventValidators.js";
+import {
+  listUniversityEventsAdmin,
+  createEvent,
+} from "../controllers/adminEventController.js";
 import {
   listUniversityUpdatesAdmin,
   createUpdate,
@@ -34,5 +39,7 @@ router.delete("/:id", archiveUniversity);
 router.post("/:id/verify", verifyUniversity);
 router.get("/:id/updates", listUniversityUpdatesAdmin);
 router.post("/:id/updates", validate(createUpdateSchema), createUpdate);
+router.get("/:id/events", listUniversityEventsAdmin);
+router.post("/:id/events", validate(createEventSchema), createEvent);
 
 export default router;

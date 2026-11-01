@@ -1,0 +1,701 @@
+diff --git a/controllers/adminCutoffController.js b/controllers/adminCutoffController.js
+new file mode 100644
+index 0000000..4c17ee7
+--- /dev/null
++++ b/controllers/adminCutoffController.js
+@@ -0,0 +1,102 @@
++import { Programme, Cutoff } from "../models/index.js";
++import { logAudit } from "../utils/audit.js";
++import { handleDbError } from "../utils/handleDbError.js";
++
++const notFound = (res) => res.status(404).json({ success: false, message: "Cutoff not found." });
++
++const DUPLICATE_MSG =
++  "A cutoff for this programme, year, round and category already exists. Edit it instead.";
++
++// GET /api/admin/programmes/:id/cutoffs  (includes cutoffs not yet verified)
++export async function listCutoffsAdmin(req, res, next) {
++  try {
++    if (!(await Programme.exists({ _id: req.params.id }))) {
++      return res.status(404).json({ success: false, message: "Programme not found." });
++    }
++
++    const cutoffs = await Cutoff.find({ programme: req.params.id }).sort({
++      year: -1,
++      round: 1,
++      category: 1,
++    });
++
++    return res.status(200).json({ success: true, data: { cutoffs } });
++  } catch (error) {
++    next(error);
++  }
++}
++
++// POST /api/admin/programmes/:id/cutoffs
++export async function createCutoff(req, res, next) {
++  try {
++    if (!(await Programme.exists({ _id: req.params.id, isArchived: false }))) {
++      return res.status(404).json({ success: false, message: "Programme not found." });
++    }
++
++    const cutoff = await Cutoff.create({
++      ...req.body,
++      programme: req.params.id,
++      createdBy: req.user._id,
++    });
++
++    await logAudit({
++      userId: req.user._id,
++      action: "CREATE",
++      entity: "Cutoff",
++      entityId: cutoff._id,
++      after: cutoff.toObject(),
++    });
++
++    return res.status(201).json({ success: true, message: "Cutoff created.", data: { cutoff } });
++  } catch (error) {
++    if (!handleDbError(error, res, DUPLICATE_MSG)) next(error);
++  }
++}
++
++// PATCH /api/admin/cutoffs/:id
++export async function updateCutoff(req, res, next) {
++  try {
++    const cutoff = await Cutoff.findById(req.params.id);
++    if (!cutoff) return notFound(res);
++
++    const before = cutoff.toObject();
++    cutoff.set(req.body);
++    await cutoff.save();
++
++    await logAudit({
++      userId: req.user._id,
++      action: "UPDATE",
++      entity: "Cutoff",
++      entityId: cutoff._id,
++      before,
++      after: cutoff.toObject(),
++    });
++
++    return res.status(200).json({ success: true, message: "Cutoff updated.", data: { cutoff } });
++  } catch (error) {
++    if (!handleDbError(error, res, DUPLICATE_MSG)) next(error);
++  }
++}
++
++// DELETE /api/admin/cutoffs/:id
++export async function deleteCutoff(req, res, next) {
++  try {
++    const cutoff = await Cutoff.findById(req.params.id);
++    if (!cutoff) return notFound(res);
++
++    const before = cutoff.toObject();
++    await cutoff.deleteOne();
++
++    await logAudit({
++      userId: req.user._id,
++      action: "DELETE",
++      entity: "Cutoff",
++      entityId: cutoff._id,
++      before,
++    });
++
++    return res.status(200).json({ success: true, message: "Cutoff deleted." });
++  } catch (error) {
++    next(error);
++  }
++}
+diff --git a/controllers/adminEventController.js b/controllers/adminEventController.js
+new file mode 100644
+index 0000000..1a0d4b4
+--- /dev/null
++++ b/controllers/adminEventController.js
+@@ -0,0 +1,155 @@
++import { University, Course, Programme, Event } from "../models/index.js";
++import { EVENT_TYPES } from "../models/constants.js";
++import { logAudit } from "../utils/audit.js";
++import { getPagination, paginationMeta } from "../utils/pagination.js";
++
++const notFound = (res) => res.status(404).json({ success: false, message: "Event not found." });
++const badRequest = (res, message) => res.status(400).json({ success: false, message });
++
++// A course-specific date must be for a course this university really offers
++async function courseProblem(universityId, courseId) {
++  if (!(await Course.exists({ _id: courseId, isActive: true }))) return "Course not found.";
++  const offered = await Programme.exists({ university: universityId, course: courseId, isArchived: false });
++  return offered ? null : "This university does not offer that course.";
++}
++
++// GET /api/admin/universities/:id/events  (includes events not yet verified)
++export async function listUniversityEventsAdmin(req, res, next) {
++  try {
++    if (!(await University.exists({ _id: req.params.id }))) {
++      return res.status(404).json({ success: false, message: "University not found." });
++    }
++
++    const { page, limit, skip } = getPagination(req.query);
++    const { type, verified } = req.query;
++
++    const filter = { university: req.params.id };
++    if (typeof type === "string" && EVENT_TYPES.includes(type)) filter.type = type;
++    if (verified === "true" || verified === "false") filter.verified = verified === "true";
++
++    const [events, total] = await Promise.all([
++      Event.find(filter).populate("course", "name slug").sort({ startsAt: 1, _id: 1 }).skip(skip).limit(limit),
++      Event.countDocuments(filter),
++    ]);
++
++    return res.status(200).json({
++      success: true,
++      data: { events, pagination: paginationMeta(page, limit, total) },
++    });
++  } catch (error) {
++    next(error);
++  }
++}
++
++// POST /api/admin/universities/:id/events
++export async function createEvent(req, res, next) {
++  try {
++    const university = await University.exists({ _id: req.params.id, isArchived: false });
++    if (!university) {
++      return res.status(404).json({ success: false, message: "University not found." });
++    }
++
++    const { courseId, ...fields } = req.body;
++
++    if (courseId) {
++      const problem = await courseProblem(req.params.id, courseId);
++      if (problem) return badRequest(res, problem);
++    }
++
++    // Stops the same date being entered twice
++    const duplicate = await Event.exists({
++      university: req.params.id,
++      course: courseId ?? null, // null also matches "no course"
++      type: fields.type,
++      title: fields.title,
++      startsAt: fields.startsAt,
++    });
++    if (duplicate) {
++      return res.status(409).json({ success: false, message: "This event already exists." });
++    }
++
++    const event = await Event.create({
++      ...fields,
++      university: req.params.id,
++      course: courseId,
++      createdBy: req.user._id,
++    });
++
++    await logAudit({
++      userId: req.user._id,
++      action: "CREATE",
++      entity: "Event",
++      entityId: event._id,
++      after: event.toObject(),
++    });
++
++    return res.status(201).json({ success: true, message: "Event created.", data: { event } });
++  } catch (error) {
++    if (error.name === "ValidationError") return badRequest(res, "Invalid data provided.");
++    next(error);
++  }
++}
++
++// PATCH /api/admin/events/:id
++export async function updateEvent(req, res, next) {
++  try {
++    const event = await Event.findById(req.params.id);
++    if (!event) return notFound(res);
++
++    const { courseId, ...fields } = req.body;
++
++    if (courseId) {
++      const problem = await courseProblem(event.university, courseId);
++      if (problem) return badRequest(res, problem);
++    }
++
++    const before = event.toObject();
++
++    event.set(fields);
++    if (courseId === null) event.course = undefined;
++    else if (courseId) event.course = courseId;
++
++    if (event.endsAt && event.endsAt < event.startsAt) {
++      return badRequest(res, "endsAt cannot be before startsAt.");
++    }
++
++    await event.save();
++
++    await logAudit({
++      userId: req.user._id,
++      action: "UPDATE",
++      entity: "Event",
++      entityId: event._id,
++      before,
++      after: event.toObject(),
++    });
++
++    return res.status(200).json({ success: true, message: "Event updated.", data: { event } });
++  } catch (error) {
++    if (error.name === "ValidationError") return badRequest(res, "Invalid data provided.");
++    next(error);
++  }
++}
++
++// DELETE /api/admin/events/:id  (the audit log keeps a copy of what was deleted)
++export async function deleteEvent(req, res, next) {
++  try {
++    const event = await Event.findById(req.params.id);
++    if (!event) return notFound(res);
++
++    const before = event.toObject();
++    await event.deleteOne();
++
++    await logAudit({
++      userId: req.user._id,
++      action: "DELETE",
++      entity: "Event",
++      entityId: event._id,
++      before,
++    });
++
++    return res.status(200).json({ success: true, message: "Event deleted." });
++  } catch (error) {
++    next(error);
++  }
++}
+diff --git a/controllers/adminProgrammeController.js b/controllers/adminProgrammeController.js
+new file mode 100644
+index 0000000..e74462f
+--- /dev/null
++++ b/controllers/adminProgrammeController.js
+@@ -0,0 +1,175 @@
++import { University, Course, Programme } from "../models/index.js";
++import { logAudit } from "../utils/audit.js";
++import { getPagination, paginationMeta } from "../utils/pagination.js";
++import { isObjectId } from "../utils/isObjectId.js";
++import { handleDbError } from "../utils/handleDbError.js";
++
++const notFound = (res) => res.status(404).json({ success: false, message: "Programme not found." });
++const badRequest = (res, message) => res.status(400).json({ success: false, message });
++
++const DUPLICATE_MSG =
++  "This university already has a programme for that course (it may be archived: restore it with isArchived false).";
++
++const populateBoth = (query) =>
++  query.populate("university", "name shortName slug").populate("course", "name slug");
++
++export async function listProgrammesAdmin(req, res, next) {
++  try {
++    const { page, limit, skip } = getPagination(req.query);
++    const { universityId, courseId, verified, archived } = req.query;
++
++    if (universityId !== undefined && !isObjectId(universityId)) return badRequest(res, "Invalid universityId.");
++    if (courseId !== undefined && !isObjectId(courseId)) return badRequest(res, "Invalid courseId.");
++
++    const filter = { isArchived: archived === "true" };
++    if (universityId) filter.university = universityId;
++    if (courseId) filter.course = courseId;
++    if (verified === "true" || verified === "false") filter.verified = verified === "true";
++
++    const [programmes, total] = await Promise.all([
++      populateBoth(Programme.find(filter).sort({ updatedAt: -1, _id: 1 }).skip(skip).limit(limit)),
++      Programme.countDocuments(filter),
++    ]);
++
++    return res.status(200).json({
++      success: true,
++      data: { programmes, pagination: paginationMeta(page, limit, total) },
++    });
++  } catch (error) {
++    next(error);
++  }
++}
++
++export async function getProgrammeAdmin(req, res, next) {
++  try {
++    const programme = await populateBoth(Programme.findById(req.params.id));
++    if (!programme) return notFound(res);
++    return res.status(200).json({ success: true, data: { programme } });
++  } catch (error) {
++    next(error);
++  }
++}
++
++export async function createProgramme(req, res, next) {
++  try {
++    const { universityId, courseId, ...fields } = req.body;
++
++    if (!(await University.exists({ _id: universityId, isArchived: false }))) {
++      return res.status(404).json({ success: false, message: "University not found." });
++    }
++    if (!(await Course.exists({ _id: courseId, isActive: true }))) {
++      return res.status(404).json({ success: false, message: "Course not found." });
++    }
++
++    const programme = await Programme.create({
++      ...fields,
++      university: universityId,
++      course: courseId,
++      updatedBy: req.user._id,
++    });
++
++    await logAudit({
++      userId: req.user._id,
++      action: "CREATE",
++      entity: "Programme",
++      entityId: programme._id,
++      after: programme.toObject(),
++    });
++
++    return res.status(201).json({ success: true, message: "Programme created.", data: { programme } });
++  } catch (error) {
++    if (!handleDbError(error, res, DUPLICATE_MSG)) next(error);
++  }
++}
++
++export async function updateProgramme(req, res, next) {
++  try {
++    const programme = await Programme.findById(req.params.id);
++    if (!programme) return notFound(res);
++
++    const before = programme.toObject();
++
++    programme.set(req.body);
++    programme.updatedBy = req.user._id;
++
++    // Checked after merging, so changing only one of the two numbers is also caught
++    if (
++      programme.seatsAvailable !== undefined &&
++      programme.totalSeats !== undefined &&
++      programme.seatsAvailable > programme.totalSeats
++    ) {
++      return badRequest(res, "seatsAvailable cannot be more than totalSeats.");
++    }
++
++    await programme.save();
++
++    await logAudit({
++      userId: req.user._id,
++      action: "UPDATE",
++      entity: "Programme",
++      entityId: programme._id,
++      before,
++      after: programme.toObject(),
++    });
++
++    return res.status(200).json({ success: true, message: "Programme updated.", data: { programme } });
++  } catch (error) {
++    if (!handleDbError(error, res, DUPLICATE_MSG)) next(error);
++  }
++}
++
++export async function archiveProgramme(req, res, next) {
++  try {
++    const programme = await Programme.findById(req.params.id);
++    if (!programme) return notFound(res);
++
++    const before = programme.toObject();
++    programme.isArchived = true;
++    programme.updatedBy = req.user._id;
++    await programme.save();
++
++    await logAudit({
++      userId: req.user._id,
++      action: "UPDATE",
++      entity: "Programme",
++      entityId: programme._id,
++      before,
++      after: programme.toObject(),
++    });
++
++    return res.status(200).json({ success: true, message: "Programme archived." });
++  } catch (error) {
++    next(error);
++  }
++}
++
++// "I just checked this against the official source"
++export async function verifyProgramme(req, res, next) {
++  try {
++    const programme = await Programme.findById(req.params.id);
++    if (!programme) return notFound(res);
++
++    const before = programme.toObject();
++    programme.verified = true;
++    programme.lastVerifiedAt = new Date();
++    programme.updatedBy = req.user._id;
++    await programme.save();
++
++    await logAudit({
++      userId: req.user._id,
++      action: "UPDATE",
++      entity: "Programme",
++      entityId: programme._id,
++      before,
++      after: programme.toObject(),
++    });
++
++    return res.status(200).json({
++      success: true,
++      message: "Programme marked as verified.",
++      data: { programme },
++    });
++  } catch (error) {
++    next(error);
++  }
++}
+diff --git a/routes/adminCutoffRoutes.js b/routes/adminCutoffRoutes.js
+new file mode 100644
+index 0000000..be50bf1
+--- /dev/null
++++ b/routes/adminCutoffRoutes.js
+@@ -0,0 +1,13 @@
++import { Router } from "express";
++import { validate } from "../middleware/validate.js";
++import { checkId } from "../middleware/checkId.js";
++import { updateCutoffSchema } from "../validators/cutoffValidators.js";
++import { updateCutoff, deleteCutoff } from "../controllers/adminCutoffController.js";
++
++const router = Router();
++router.param("id", checkId);
++
++router.patch("/:id", validate(updateCutoffSchema), updateCutoff);
++router.delete("/:id", deleteCutoff);
++
++export default router;
+diff --git a/routes/adminEventRoutes.js b/routes/adminEventRoutes.js
+new file mode 100644
+index 0000000..fdc9631
+--- /dev/null
++++ b/routes/adminEventRoutes.js
+@@ -0,0 +1,13 @@
++import { Router } from "express";
++import { validate } from "../middleware/validate.js";
++import { checkId } from "../middleware/checkId.js";
++import { updateEventSchema } from "../validators/eventValidators.js";
++import { updateEvent, deleteEvent } from "../controllers/adminEventController.js";
++
++const router = Router();
++router.param("id", checkId);
++
++router.patch("/:id", validate(updateEventSchema), updateEvent);
++router.delete("/:id", deleteEvent);
++
++export default router;
+diff --git a/routes/adminProgrammeRoutes.js b/routes/adminProgrammeRoutes.js
+new file mode 100644
+index 0000000..efd1144
+--- /dev/null
++++ b/routes/adminProgrammeRoutes.js
+@@ -0,0 +1,28 @@
++import { Router } from "express";
++import { validate } from "../middleware/validate.js";
++import { checkId } from "../middleware/checkId.js";
++import { createProgrammeSchema, updateProgrammeSchema } from "../validators/programmeValidators.js";
++import { createCutoffSchema } from "../validators/cutoffValidators.js";
++import {
++  listProgrammesAdmin,
++  getProgrammeAdmin,
++  createProgramme,
++  updateProgramme,
++  archiveProgramme,
++  verifyProgramme,
++} from "../controllers/adminProgrammeController.js";
++import { listCutoffsAdmin, createCutoff } from "../controllers/adminCutoffController.js";
++
++const router = Router();
++router.param("id", checkId);
++
++router.get("/", listProgrammesAdmin);
++router.post("/", validate(createProgrammeSchema), createProgramme);
++router.get("/:id", getProgrammeAdmin);
++router.patch("/:id", validate(updateProgrammeSchema), updateProgramme);
++router.delete("/:id", archiveProgramme);
++router.post("/:id/verify", verifyProgramme);
++router.get("/:id/cutoffs", listCutoffsAdmin);
++router.post("/:id/cutoffs", validate(createCutoffSchema), createCutoff);
++
++export default router;
+diff --git a/routes/adminRoutes.js b/routes/adminRoutes.js
+index 5058cee..7d4e904 100644
+--- a/routes/adminRoutes.js
++++ b/routes/adminRoutes.js
+@@ -3,6 +3,9 @@ import { authenticate, requireRole } from "../middleware/auth.js";
+ import adminUniversityRoutes from "./adminUniversityRoutes.js";
+ import adminCourseRoutes from "./adminCourseRoutes.js";
+ import adminUpdateRoutes from "./adminUpdateRoutes.js";
++import adminProgrammeRoutes from "./adminProgrammeRoutes.js";
++import adminEventRoutes from "./adminEventRoutes.js";
++import adminCutoffRoutes from "./adminCutoffRoutes.js";
+ 
+ const router = Router();
+ 
+@@ -11,5 +14,8 @@ router.use(authenticate, requireRole("editor", "admin"));
+ router.use("/universities", adminUniversityRoutes);
+ router.use("/courses", adminCourseRoutes);
+ router.use("/updates", adminUpdateRoutes);
++router.use("/programmes", adminProgrammeRoutes);
++router.use("/events", adminEventRoutes);
++router.use("/cutoffs", adminCutoffRoutes);
+ 
+ export default router;
+\ No newline at end of file
+diff --git a/routes/adminUniversityRoutes.js b/routes/adminUniversityRoutes.js
+index b121f6e..126e2e3 100644
+--- a/routes/adminUniversityRoutes.js
++++ b/routes/adminUniversityRoutes.js
+@@ -7,6 +7,11 @@ import {
+   statusSchema,
+ } from "../validators/universityValidators.js";
+ import { createUpdateSchema } from "../validators/updateValidators.js";
++import { createEventSchema } from "../validators/eventValidators.js";
++import {
++  listUniversityEventsAdmin,
++  createEvent,
++} from "../controllers/adminEventController.js";
+ import {
+   listUniversityUpdatesAdmin,
+   createUpdate,
+@@ -34,5 +39,7 @@ router.delete("/:id", archiveUniversity);
+ router.post("/:id/verify", verifyUniversity);
+ router.get("/:id/updates", listUniversityUpdatesAdmin);
+ router.post("/:id/updates", validate(createUpdateSchema), createUpdate);
++router.get("/:id/events", listUniversityEventsAdmin);
++router.post("/:id/events", validate(createEventSchema), createEvent);
+ 
+ export default router;
+\ No newline at end of file
+diff --git a/validators/common.js b/validators/common.js
+new file mode 100644
+index 0000000..9a89ce7
+--- /dev/null
++++ b/validators/common.js
+@@ -0,0 +1,15 @@
++import { z } from "zod";
++
++export const objectId = z.string().regex(/^[a-f\d]{24}$/i, "Invalid ID format.");
++
++// Only http/https links are accepted
++export const httpUrl = z
++  .string()
++  .trim()
++  .url()
++  .refine((v) => /^https?:\/\//i.test(v), {
++    message: "URL must start with http:// or https://",
++  });
++
++export const atLeastOneField = (obj) => Object.keys(obj).length > 0;
++export const atLeastOneFieldMessage = { message: "Provide at least one field to update." };
+diff --git a/validators/cutoffValidators.js b/validators/cutoffValidators.js
+new file mode 100644
+index 0000000..27b136d
+--- /dev/null
++++ b/validators/cutoffValidators.js
+@@ -0,0 +1,25 @@
++import { z } from "zod";
++import { CATEGORIES } from "../models/constants.js";
++import { httpUrl, atLeastOneField, atLeastOneFieldMessage } from "./common.js";
++
++const maxYear = new Date().getFullYear() + 1;
++
++export const createCutoffSchema = z.object({
++  year: z.number().int().min(2022).max(maxYear),
++  round: z.number().int().min(1).max(10).default(1),
++  category: z.enum(CATEGORIES),
++  closingScore: z.number().min(0).max(300), // marks out of 300
++  sourceUrl: httpUrl.optional(),
++  verified: z.boolean().optional(),
++});
++
++// Year, round and category identify a cutoff, so they cannot be edited:
++// delete the cutoff and create a new one instead.
++export const updateCutoffSchema = z
++  .object({
++    closingScore: z.number().min(0).max(300),
++    sourceUrl: httpUrl,
++    verified: z.boolean(),
++  })
++  .partial()
++  .refine(atLeastOneField, atLeastOneFieldMessage);
+diff --git a/validators/eventValidators.js b/validators/eventValidators.js
+new file mode 100644
+index 0000000..36cf5c8
+--- /dev/null
++++ b/validators/eventValidators.js
+@@ -0,0 +1,39 @@
++import { z } from "zod";
++import { EVENT_TYPES } from "../models/constants.js";
++import { objectId, httpUrl, atLeastOneField, atLeastOneFieldMessage } from "./common.js";
++
++// Catches typos like 2062 for 2026
++const sensibleDate = (d) => d.getFullYear() >= 2022 && d.getFullYear() <= 2040;
++const date = z.coerce.date().refine(sensibleDate, { message: "That date looks wrong." });
++
++const fields = {
++  type: z.enum(EVENT_TYPES),
++  title: z.string().trim().min(3).max(200),
++  description: z.string().trim().max(1000),
++  startsAt: date,
++  endsAt: date,
++  sourceUrl: httpUrl,
++  verified: z.boolean(),
++};
++
++export const createEventSchema = z
++  .object({
++    type: fields.type,
++    title: fields.title,
++    startsAt: fields.startsAt,
++    sourceUrl: fields.sourceUrl, // every date must point to the official notice
++    description: fields.description.optional(),
++    endsAt: fields.endsAt.optional(),
++    courseId: objectId.optional(), // leave out for a date that applies to the whole university
++    verified: fields.verified.optional(),
++  })
++  .refine((e) => !e.endsAt || e.endsAt >= e.startsAt, {
++    message: "endsAt cannot be before startsAt.",
++  });
++
++// courseId: null turns it back into a whole-university date
++export const updateEventSchema = z
++  .object(fields)
++  .partial()
++  .extend({ courseId: objectId.nullable().optional() })
++  .refine(atLeastOneField, atLeastOneFieldMessage);
+diff --git a/validators/programmeValidators.js b/validators/programmeValidators.js
+new file mode 100644
+index 0000000..202d8ab
+--- /dev/null
++++ b/validators/programmeValidators.js
+@@ -0,0 +1,27 @@
++import { z } from "zod";
++import { objectId, httpUrl, atLeastOneField, atLeastOneFieldMessage } from "./common.js";
++
++const fields = z
++  .object({
++    programmeName: z.string().trim().min(2).max(150),
++    durationYears: z.number().int().min(1).max(6),
++    totalSeats: z.number().int().min(0).max(100000),
++    seatsAvailable: z.number().int().min(0).max(100000),
++    annualFee: z.number().min(0).max(10000000),
++    eligibility: z.string().trim().max(1000),
++    sourceUrl: httpUrl,
++    verified: z.boolean(),
++  })
++  .partial();
++
++export const createProgrammeSchema = fields
++  .extend({ universityId: objectId, courseId: objectId })
++  .refine((p) => p.seatsAvailable === undefined || p.totalSeats === undefined || p.seatsAvailable <= p.totalSeats, {
++    message: "seatsAvailable cannot be more than totalSeats.",
++  });
++
++// The university and course of a programme cannot change: cutoffs are attached to it.
++// To "move" a programme, archive it and create a new one.
++export const updateProgrammeSchema = fields
++  .extend({ isArchived: z.boolean().optional() })
++  .refine(atLeastOneField, atLeastOneFieldMessage);
