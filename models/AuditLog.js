@@ -13,5 +13,7 @@ const auditLogSchema = new mongoose.Schema(
 );
 
 auditLogSchema.index({ entity: 1, entityId: 1, createdAt: -1 });
+auditLogSchema.index({ createdAt: -1 }); // the newest-first list
+auditLogSchema.index({ user: 1, createdAt: -1 }); // what did this person change?
 
 export default mongoose.model("AuditLog", auditLogSchema);

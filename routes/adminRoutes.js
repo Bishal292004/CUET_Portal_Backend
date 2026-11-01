@@ -7,6 +7,8 @@ import adminProgrammeRoutes from "./adminProgrammeRoutes.js";
 import adminEventRoutes from "./adminEventRoutes.js";
 import adminCutoffRoutes from "./adminCutoffRoutes.js";
 import adminEmailRoutes from "./adminEmailRoutes.js";
+import adminUserRoutes from "./adminUserRoutes.js";
+import adminAuditRoutes from "./adminAuditRoutes.js";
 
 const router = Router();
 
@@ -19,5 +21,7 @@ router.use("/programmes", adminProgrammeRoutes);
 router.use("/events", adminEventRoutes);
 router.use("/cutoffs", adminCutoffRoutes);
 router.use("/email", adminEmailRoutes);
+router.use("/users", adminUserRoutes);
+router.use("/audit-logs", adminAuditRoutes);
 
 export default router;
